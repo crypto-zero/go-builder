@@ -1,9 +1,13 @@
-name: golang latest version builder
+name: golang runtime build
 
 on:
   workflow_dispatch:
   schedule:
     - cron: '0 0 * * *'
+
+permissions:
+  packages: write
+  contents: read
 
 env:
   IMAGE_REGISTRY: ghcr.io
@@ -25,19 +29,31 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Get latest Go version
-        id: go_version
+      - name: Check latest Go version and image
+        id: version_check
         run: |
+          # 获取最新 Go 版本
           LATEST_GO_VERSION=$(curl -s 'https://go.dev/VERSION?m=text' | head -n 1 | cut -c 3-)
-          echo "VERSION=$LATEST_GO_VERSION" >> $GITHUB_OUTPUT
           echo "Latest go version is $LATEST_GO_VERSION"
+          
+          # 检查镜像是否存在
+          IMAGE_TAG="${IMAGE_REGISTRY}/${PROJECT_REGISTRY}:v${LATEST_GO_VERSION}"
+          if docker manifest inspect $IMAGE_TAG >/dev/null 2>&1; then
+            echo "Image already exists: $IMAGE_TAG"
+            exit 0  # 直接结束 job
+          fi
+          
+          # 如果镜像不存在，设置版本号继续执行
+          echo "VERSION=$LATEST_GO_VERSION" >> $GITHUB_OUTPUT
 
       - name: Build and push
-        uses: docker/build-push-action@v5    # 使用官方 action
+        uses: docker/build-push-action@v5
         with:
           context: .
           push: true
           platforms: linux/amd64,linux/arm64
           build-args: |
-            VERSION=${{ steps.go_version.outputs.VERSION }}
-          tags: ${{ env.IMAGE_REGISTRY }}/${{ env.PROJECT_REGISTRY }}:v${{ steps.go_version.outputs.VERSION }}
+            VERSION=${{ steps.version_check.outputs.VERSION }}
+          tags: ${{ env.IMAGE_REGISTRY }}/${{ env.PROJECT_REGISTRY }}:v${{ steps.version_check.outputs.VERSION }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
